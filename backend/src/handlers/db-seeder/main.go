@@ -9,11 +9,10 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
-
-	"github.com/bradfitz/slice"
 	// "github.com/aws/aws-lambda-go/lambda"
 )
 
@@ -91,7 +90,7 @@ func _mergeLocalAndRemoteData() ([]Datapoint, error) {
 		})
 	}
 
-	slice.Sort(mergedData, func(i, j int) bool {
+	sort.Slice(mergedData, func(i, j int) bool {
 		return mergedData[i].Timestamp < mergedData[j].Timestamp
 	})
 
