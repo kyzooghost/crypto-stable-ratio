@@ -1,17 +1,34 @@
+// TODO - refactor to separate business logic from handler
+
 package main
 
 import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
+	"strconv"
+	"sync"
 	"time"
+
+	"github.com/bradfitz/slice"
 	// "github.com/aws/aws-lambda-go/lambda"
 )
 
 const DAY = 86400
 const WEEK = 7 * DAY
+
+type Response struct {
+	Success bool        `json:"success"`
+	Data    []Datapoint `json:"data"`
+}
+
+type Datapoint struct {
+	Timestamp int64   `json:"t"`
+	Value     float64 `json:"v"`
+}
 
 // type MyEvent struct {
 // 	Name string `json:"name"`
@@ -27,10 +44,63 @@ func main() {
 	// 	fmt.Printf("%s\n", seedValues[i])
 	// }
 	// lambda.Start(HandleRequest)
-	_getSanitizedData(os.Getenv("STABLE_MCAP_ENDPOINT"))
+	_mergeLocalAndRemoteData()
 }
 
-func parseLocalSeedValues() ([][]string, error) {
+func _mergeLocalAndRemoteData() ([]Datapoint, error) {
+	var localData, remoteData, mergedData []Datapoint
+	var err error
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() error {
+		defer wg.Done()
+		localData, err = _getLocalSeedValues()
+		if err != nil {
+			return fmt.Errorf("_getLocalSeedValues error: %s", err)
+		}
+		return nil
+	}()
+	go func() error {
+		defer wg.Done()
+		remoteData, err = _getRemoteCryptoStableData()
+		if err != nil {
+			return fmt.Errorf("_getRemoteCryptoStableData error: %s", err)
+		}
+		return nil
+	}()
+	wg.Wait()
+
+	tempMap := make(map[int64]float64)
+
+	// Prioritize remoteData over localData
+	for i := range remoteData {
+		tempMap[remoteData[i].Timestamp] = remoteData[i].Value
+	}
+
+	for i := range localData {
+		_, ok := tempMap[localData[i].Timestamp]
+		if !ok {
+			tempMap[localData[i].Timestamp] = localData[i].Value
+		}
+	}
+
+	for key := range tempMap {
+		mergedData = append(mergedData, Datapoint{
+			Timestamp: key,
+			Value:     tempMap[key],
+		})
+	}
+
+	slice.Sort(mergedData, func(i, j int) bool {
+		return mergedData[i].Timestamp < mergedData[j].Timestamp
+	})
+
+	fmt.Printf("%v\n", mergedData)
+
+	return mergedData, nil
+}
+
+func _getLocalSeedValues() ([]Datapoint, error) {
 	file, err := os.Open("./seed-values.csv")
 	if err != nil {
 		return nil, fmt.Errorf("error opening CSV file: %s", err)
@@ -40,23 +110,94 @@ func parseLocalSeedValues() ([][]string, error) {
 	// Create a new CSV reader
 	reader := csv.NewReader(file)
 
-	// Read all records from the CSV file
-	records, err := reader.ReadAll()
+	// Read past first (header) line of CSV file
+	_, err = reader.Read()
 	if err != nil {
-		return nil, fmt.Errorf("error reading CSV records: %s", err)
+		println("_getLocalSeedValues read CSV header error", err)
+		return nil, fmt.Errorf("_getLocalSeedValues read CSV header error: %s", err)
 	}
 
-	return records, nil
+	// Read all records from the CSV file
+	// Basically a while true loop
+
+	var seedValues []Datapoint
+	var tempTimestamp int
+	var tempValue float64
+
+	for {
+		record, err := reader.Read()
+		if err != nil {
+			// Check for end-of-file error
+			if err.Error() == "EOF" {
+				break
+			}
+			println("_getLocalSeedValues read CSV file error", err)
+			return nil, fmt.Errorf("_getLocalSeedValues read CSV file error: %s", err)
+		}
+
+		tempTimestamp, err = strconv.Atoi(record[0])
+		if err != nil {
+			println("_getLocalSeedValues read CSV file while parse to int error", err)
+			return nil, fmt.Errorf("_getLocalSeedValues read CSV file while parse to int error error: %s", err)
+		}
+
+		if record[1] != "" {
+			tempValue, err = strconv.ParseFloat(record[1], 64)
+			if err != nil {
+				println("_getLocalSeedValues read CSV file while parse to float error", err)
+				return nil, fmt.Errorf("_getLocalSeedValues read CSV file while parse to float error error: %s", err)
+			}
+			seedValues = append(seedValues, Datapoint{
+				Timestamp: int64(tempTimestamp),
+				Value:     tempValue,
+			})
+		}
+
+	}
+
+	// fmt.Printf("%v\n", seedValues)
+
+	return seedValues, nil
 }
 
-type Response struct {
-	Success bool        `json:"success"`
-	Data    []Datapoint `json:"data"`
-}
+func _getRemoteCryptoStableData() ([]Datapoint, error) {
+	var stableMcapData, totalMcapData, cryptoStableData []Datapoint
+	var err error
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() error {
+		defer wg.Done()
+		stableMcapData, err = _getSanitizedData(os.Getenv("STABLE_MCAP_ENDPOINT"))
+		if err != nil {
+			return fmt.Errorf("_getSanitizedData for STABLE_MCAP_ENDPOINT error: %s", err)
+		}
+		return nil
+	}()
+	go func() error {
+		defer wg.Done()
+		totalMcapData, err = _getSanitizedData(os.Getenv("TOTAL_MCAP_ENDPOINT"))
+		if err != nil {
+			return fmt.Errorf("_getSanitizedData for TOTAL_MCAP_ENDPOINT error: %s", err)
+		}
+		return nil
+	}()
+	wg.Wait()
 
-type Datapoint struct {
-	Timestamp int64   `json:"t"`
-	Value     float64 `json:"v"`
+	var tempValue float64
+	for i := range stableMcapData {
+		if stableMcapData[i].Timestamp == totalMcapData[i].Timestamp {
+			tempValue = totalMcapData[i].Value / stableMcapData[i].Value
+
+			cryptoStableData = append(cryptoStableData, Datapoint{
+				Timestamp: stableMcapData[i].Timestamp,
+				Value:     math.Trunc(tempValue*100) / 100,
+			})
+		}
+	}
+
+	// fmt.Printf("%v\n", cryptoStableData)
+
+	return cryptoStableData, nil
 }
 
 func _getSanitizedData(uri string) ([]Datapoint, error) {
@@ -117,8 +258,6 @@ func _getSanitizedData(uri string) ([]Datapoint, error) {
 			sanitizedData[tempLength-1].Value = tempData.Value
 		}
 	}
-
-	fmt.Printf("%v\n", sanitizedData)
 
 	return sanitizedData, nil
 }
