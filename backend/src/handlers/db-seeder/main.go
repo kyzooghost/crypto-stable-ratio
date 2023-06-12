@@ -13,7 +13,11 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
 	// "github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	// "github.com/aws/aws-sdk-go/service/s3/s3manager"
 )
 
 const DAY = 86400
@@ -43,7 +47,44 @@ func main() {
 	// 	fmt.Printf("%s\n", seedValues[i])
 	// }
 	// lambda.Start(HandleRequest)
-	_mergeLocalAndRemoteData()
+	seedValues, _ := _mergeLocalAndRemoteData()
+	csvFile, _ := _writeToLocalCSV(seedValues)
+	_uploadCSVToS3(csvFile)
+}
+
+func _uploadCSVToS3(*os.File) error {
+	sess, err := session.NewSession(&aws.Config{Region: aws.String(S3Region)})
+	if err != nil {
+		return err
+	}
+}
+
+func _writeToLocalCSV(data []Datapoint) (*os.File, error) {
+	// Cast from []Datapoint to [][]string
+	csvData := make([][]string, 0)
+	for i := range data {
+		csvData = append(csvData, []string{strconv.FormatInt(data[i].Timestamp, 10), strconv.FormatFloat(data[i].Value, 'f', 2, 64)})
+	}
+
+	// Create local CSV file
+	csvFile, err := os.Create("crypto-stable-ratios.csv")
+	if err != nil {
+		println("_writeToLocalCSV error creating CSV file: ", err)
+		return nil, fmt.Errorf("_writeToLocalCSV error creating CSV file: %s", err)
+	}
+	defer csvFile.Close()
+
+	// Write to local CSV file
+	csvwriter := csv.NewWriter(csvFile)
+	defer csvwriter.Flush()
+	for _, record := range csvData {
+		err = csvwriter.Write(record)
+		if err != nil {
+			println("_writeToLocalCSV error writing to CSV file: ", err)
+			return nil, fmt.Errorf("_writeToLocalCSV error writing to CSV file: %s", err)
+		}
+	}
+	return csvFile, nil
 }
 
 func _mergeLocalAndRemoteData() ([]Datapoint, error) {
@@ -260,8 +301,3 @@ func _getSanitizedData(uri string) ([]Datapoint, error) {
 
 	return sanitizedData, nil
 }
-
-// Parse seed-values.csv into memory
-// Query API endpoints
-// Merge API endpoint data, with local seed-values.csv
-// Save result to S3 bucket
