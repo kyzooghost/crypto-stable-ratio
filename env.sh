@@ -1,4 +1,5 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# Use 'source .env.sh', not './env.sh' or else environment variables set here are not available - https://askubuntu.com/a/53179
 # Need language-agnostic way of defining and sharing environment variables
 # Note that this file is not for storing private credentials like an API key
 set -a
@@ -6,6 +7,7 @@ set -a
 # These variables are injected into shell environment variables
 STABLE_MCAP_ENDPOINT=https://api.btctools.io/api/marketcap-stable-chart?period=1y
 TOTAL_MCAP_ENDPOINT=https://api.btctools.io/api/marketcap-total-chart?period=1y
-CSV_S3_PATH=crypto-stable-ratio-graph/crypto-stable-ratios
 
 set +a
+
+echo "ENV VARIABLES SET"
