@@ -5,6 +5,7 @@
 set -a
 
 # These variables are injected into shell environment variables
+BUCKET_DB_NAME=crypto-stable-ratio-db
 STABLE_MCAP_ENDPOINT=https://api.btctools.io/api/marketcap-stable-chart?period=1y
 TOTAL_MCAP_ENDPOINT=https://api.btctools.io/api/marketcap-total-chart?period=1y
 

@@ -15,9 +15,10 @@ import (
 	"time"
 
 	// "github.com/aws/aws-lambda-go/lambda"
+
+	"github.com/aws/aws-sdk-go-v2/aws/external"
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	// "github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/aws/aws-sdk-go/service/s3"
 )
 
 const DAY = 86400
@@ -42,21 +43,49 @@ type Datapoint struct {
 // }
 
 func main() {
-	// seedValues, _ := parseLocalSeedValues()
-	// for i := range seedValues {
-	// 	fmt.Printf("%s\n", seedValues[i])
-	// }
 	// lambda.Start(HandleRequest)
 	seedValues, _ := _mergeLocalAndRemoteData()
 	csvFile, _ := _writeToLocalCSV(seedValues)
 	_uploadCSVToS3(csvFile)
 }
 
-func _uploadCSVToS3(*os.File) error {
-	sess, err := session.NewSession(&aws.Config{Region: aws.String(S3Region)})
+func _uploadCSVToS3(file *os.File) error {
+	// Get system AWS config
+	cfg, err := external.LoadDefaultAWSConfig(
+		WithSharedConfigProfile("so"),
+	)
+
 	if err != nil {
-		return err
+		println("_uploadCSVToS3 LoadDefaultAWSConfig error: ", err)
+		return fmt.Errorf("_uploadCSVToS3 LoadDefaultAWSConfig error: %s", err)
 	}
+
+	// Create an S3 client
+	client := s3.New(cfg)
+
+	// Open file
+	csvFile, err := os.Open(file.Name())
+	if err != nil {
+		println("_uploadCSVToS3 error opening CSV file: ", err)
+		return fmt.Errorf("_uploadCSVToS3 error opening CSV file: %s", err)
+	}
+	defer csvFile.Close()
+
+	// Create the input parameters for the S3 PutObject operation
+	input := &s3.PutObjectInput{
+		Bucket: aws.String(os.Getenv("BUCKET_DB_NAME")),
+		Key:    aws.String("crypto-stable-ratios.csv"),
+		Body:   csvFile,
+	}
+
+	// Upload the file to S3
+	_, err = client.PutObjectRequest(input).Send()
+	if err != nil {
+		println("_uploadCSVToS3 error uploading CSV file to S3: ", err)
+		return fmt.Errorf("_uploadCSVToS3 error uploading CSV file to S3: %s", err)
+	}
+
+	println("Successful upload of CSV file")
 }
 
 func _writeToLocalCSV(data []Datapoint) (*os.File, error) {

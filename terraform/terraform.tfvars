@@ -1,1 +1,1 @@
-lambda_name = "hello-world-go"
+BACKEND_BUCKET_NAME = "crypto-stable-ratio-terraform-backend"
